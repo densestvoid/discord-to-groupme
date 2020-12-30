@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strings"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/densestvoid/groupme"
@@ -19,11 +20,12 @@ type App interface {
 
 // app contains all of the pieces for the bots with a convient start and stop function
 type app struct {
-	gmClient  *groupme.Client
-	discSesh  *discordgo.Session
-	server    http.Server
-	finishSig chan struct{}
-	config    *Config
+	gmClient   *groupme.Client
+	discSesh   *discordgo.Session
+	server     http.Server
+	finishSig  chan struct{}
+	config     *Config
+	userLookup map[string]string
 }
 
 // Rerturn a new App instance
@@ -35,6 +37,7 @@ func NewApp(config *Config) App {
 
 // Start will start both bots and run until stop is called or the server fails
 func (a *app) Start() (finshedSignal chan struct{}, err error) {
+	a.userLookup = map[string]string{}
 	a.finishSig = make(chan struct{})
 	a.gmClient = groupme.NewClient("")
 	a.discSesh, err = discordgo.New("Bot " + a.config.DiscordBotToken)
@@ -98,24 +101,37 @@ func (a *app) AddDiscordHandlers() {
 		if msg.Author.Bot {
 			return
 		}
-
-		textMessage := fmt.Sprintf("[%s]: %s", msg.Author.Username, msg.Content)
+		if resp, ok := a.parseDiscordCommand(msg); ok {
+			if _, err := a.discSesh.ChannelMessageSend(a.config.DiscordChannelID, resp); err != nil {
+				fmt.Println(err)
+			}
+			return
+		}
+		userName, ok := a.userLookup[msg.Author.Username]
+		if !ok {
+			userName = msg.Author.Username
+		}
+		textMessage := fmt.Sprintf("[%s]: %s", userName, msg.Content)
 
 		if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, textMessage, nil); err != nil {
 			fmt.Println(err)
 		}
 	})
-	// a.discSesh.AddHandler(func(session *discordgo.Session, msg *discordgo.MessageCreate) {
-	// 	if msg.Author.Bot {
-	// 		return
-	// 	}
+	a.discSesh.AddHandler(func(session *discordgo.Session, msg *discordgo.MessageUpdate) {
+		if msg.Author.Bot {
+			return
+		}
 
-	// 	textMessage := fmt.Sprintf("[%s]: %s", msg.Author.Username, msg.Content)
+		userName, ok := a.userLookup[msg.Author.Username]
+		if !ok {
+			userName = msg.Author.Username
+		}
+		textMessage := fmt.Sprintf("[%s]*EDIT*: %s", userName, msg.Content)
 
-	// 	if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, textMessage, nil); err != nil {
-	// 		fmt.Println(err)
-	// 	}
-	// })
+		if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, textMessage, nil); err != nil {
+			fmt.Println(err)
+		}
+	})
 }
 
 // AddGroupMeHandlers add all GroupMe handlers for the client
@@ -134,7 +150,6 @@ func (a *app) AddGroupMeHandlers() {
 		if err := json.Unmarshal(bytes, &msg); err != nil {
 			fmt.Println(err)
 		}
-
 		if msg.SenderType != groupme.SenderType_User {
 			return
 		}
@@ -145,4 +160,33 @@ func (a *app) AddGroupMeHandlers() {
 			fmt.Println(err)
 		}
 	})
+}
+
+func (a *app) parseDiscordCommand(msg *discordgo.MessageCreate) (string, bool) {
+	if !strings.HasPrefix(msg.Content, "!") {
+		return "", false
+	}
+	cmdList := strings.Split(msg.Content[1:], " ")
+	switch cmdList[0] {
+	case "update":
+		return a.discordUpdateCommand(cmdList, msg), true
+	case "":
+		return "Try one of these if you do not know what to do!\n    update: let's you update your info", true
+	}
+
+	return "", false
+}
+
+func (a *app) discordUpdateCommand(cmdList []string, msg *discordgo.MessageCreate) string {
+	if len(cmdList) < 2 {
+		return "Avalible options: \n    name: Change the name that shows up in GroupMe\n"
+	}
+	switch cmdList[1] {
+	case "name":
+		newName := strings.Join(cmdList[2:], " ")
+		a.userLookup[msg.Author.Username] = newName
+		return fmt.Sprintf("'%s' You are now '%s'", msg.Author.Username, newName)
+	default:
+		return fmt.Sprintf("'%s' is not a valid command", cmdList[1])
+	}
 }
