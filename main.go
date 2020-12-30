@@ -1,18 +1,11 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-
-	"github.com/bwmarrin/discordgo"
-	"github.com/densestvoid/groupme"
-	"github.com/gorilla/mux"
 )
 
 func main() {
@@ -21,92 +14,22 @@ func main() {
 	flag.Parse()
 	config, err := ReadConfig(configFilename)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("failed to start: ", err)
 		return
 	}
 
-	gmClient := groupme.NewClient("")
-
-	dClient, err := discordgo.New("Bot " + config.DiscordBotToken)
+	app := NewApp(config)
+	finsihSig, err := app.Start()
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("failed to start: ", err)
 		return
 	}
-
-	if err := dClient.Open(); err != nil {
-		fmt.Println(err)
-	}
-	defer dClient.Close()
-
-	dClient.AddHandler(func(session *discordgo.Session, msg *discordgo.MessageCreate) {
-		if msg.Author.Bot {
-			return
-		}
-
-		textMessage := fmt.Sprintf("[%s]: %s", msg.Author.Username, msg.Content)
-
-		if err := gmClient.PostBotMessage(config.GroupMeBotToken, textMessage, nil); err != nil {
-			fmt.Println(err)
-		}
-	})
-
-	router := mux.NewRouter()
-	router.Methods("POST").Path("/GroupMeEvents").HandlerFunc(func(respWriter http.ResponseWriter, req *http.Request) {
-		defer req.Body.Close()
-
-		bytes, err := ioutil.ReadAll(req.Body)
-		if err != nil {
-			fmt.Println(err)
-		}
-
-		var msg groupme.Message
-		if err := json.Unmarshal(bytes, &msg); err != nil {
-			fmt.Println(err)
-		}
-
-		if msg.SenderType != groupme.SenderType_User {
-			return
-		}
-
-		textMessage := fmt.Sprintf("[%s]: %s", msg.Name, msg.Text)
-
-		if _, err := dClient.ChannelMessageSend(config.DiscordChannelID, textMessage); err != nil {
-			fmt.Println(err)
-		}
-	})
-
-	if err := gmClient.PostBotMessage(config.GroupMeBotToken, "<--- Started listening --->", nil); err != nil {
-		fmt.Println(err)
+	sysSigs := make(chan os.Signal, 1)
+	signal.Notify(sysSigs, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case <-sysSigs:
+		app.Stop()
+	case <-finsihSig:
 	}
 
-	if _, err := dClient.ChannelMessageSend(config.DiscordChannelID, "<--- Started listening --->"); err != nil {
-		fmt.Println(err)
-	}
-
-	server := http.Server{
-		Addr:    "0.0.0.0:8000",
-		Handler: router,
-	}
-
-	go func() {
-		if err := server.ListenAndServe(); err != nil {
-			fmt.Println(err)
-		}
-	}()
-
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	<-sigs
-
-	if err := server.Close(); err != nil {
-		fmt.Println(err)
-	}
-
-	if err := gmClient.PostBotMessage(config.GroupMeBotToken, "<--- Stopped listening --->", nil); err != nil {
-		fmt.Println(err)
-	}
-
-	if _, err := dClient.ChannelMessageSend(config.DiscordChannelID, "<--- Stopped listening --->"); err != nil {
-		fmt.Println(err)
-	}
 }
