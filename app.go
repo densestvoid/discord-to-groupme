@@ -98,7 +98,7 @@ func (a *app) Stop() {
 // AddDiscordHandlers add all handlers for the discord session
 func (a *app) AddDiscordHandlers() {
 	a.discSesh.AddHandler(func(session *discordgo.Session, msg *discordgo.MessageCreate) {
-		if msg.Author.Bot {
+		if msg.Author.Bot || msg.ChannelID != a.config.DiscordChannelID {
 			return
 		}
 		if resp, ok := a.parseDiscordCommand(msg); ok {
@@ -116,7 +116,7 @@ func (a *app) AddDiscordHandlers() {
 		}
 	})
 	a.discSesh.AddHandler(func(session *discordgo.Session, msg *discordgo.MessageUpdate) {
-		if msg.Author.Bot {
+		if msg.Author.Bot || msg.ChannelID != a.config.DiscordChannelID {
 			return
 		}
 
