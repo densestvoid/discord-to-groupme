@@ -61,7 +61,7 @@ func (a *app) Start() (finshedSignal chan struct{}, err error) {
 		}
 	}()
 
-	const startMessage = "<--- Started listening --->"
+	const startMessage = "Top of the morning to you 🎩"
 	if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, startMessage, nil); err != nil {
 		fmt.Println(err)
 	}
@@ -74,7 +74,7 @@ func (a *app) Start() (finshedSignal chan struct{}, err error) {
 
 // Stop close connections and stop the application
 func (a *app) Stop() {
-	const stopMessage = "<--- Stopped listening --->"
+	const stopMessage = " Bye Bye 👋"
 	if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, stopMessage, nil); err != nil {
 		fmt.Println(err)
 	}
@@ -107,10 +107,8 @@ func (a *app) AddDiscordHandlers() {
 			}
 			return
 		}
-		userName, ok := a.userLookup[msg.Author.Username]
-		if !ok {
-			userName = msg.Author.Username
-		}
+
+		userName := a.getUsername(msg.Message)
 		textMessage := fmt.Sprintf("[%s]: %s", userName, msg.Content)
 
 		if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, textMessage, nil); err != nil {
@@ -122,10 +120,7 @@ func (a *app) AddDiscordHandlers() {
 			return
 		}
 
-		userName, ok := a.userLookup[msg.Author.Username]
-		if !ok {
-			userName = msg.Author.Username
-		}
+		userName := a.getUsername(msg.Message)
 		textMessage := fmt.Sprintf("[%s]*EDIT*: %s", userName, msg.Content)
 
 		if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, textMessage, nil); err != nil {
@@ -174,7 +169,7 @@ func (a *app) parseDiscordCommand(msg *discordgo.MessageCreate) (string, bool) {
 		return "Try one of these if you do not know what to do!\n    update: let's you update your info", true
 	}
 
-	return "", false
+	return fmt.Sprintf("😫  D'oh! '%s' is not a valid command", cmdList[0]), true
 }
 
 func (a *app) discordUpdateCommand(cmdList []string, msg *discordgo.MessageCreate) string {
@@ -184,9 +179,29 @@ func (a *app) discordUpdateCommand(cmdList []string, msg *discordgo.MessageCreat
 	switch cmdList[1] {
 	case "name":
 		newName := strings.Join(cmdList[2:], " ")
-		a.userLookup[msg.Author.Username] = newName
-		return fmt.Sprintf("'%s' You are now '%s'", msg.Author.Username, newName)
+		oldName := a.getUsername(msg.Message)
+		err := a.updateUserName(msg.Message, newName)
+		if err != nil {
+			return err.Error()
+		}
+		return fmt.Sprintf("'%s' is now '%s'", oldName, newName)
 	default:
-		return fmt.Sprintf("'%s' is not a valid command", cmdList[1])
+		return fmt.Sprintf("😫  D'oh! '%s' is not a valid command", cmdList[1])
 	}
+}
+
+func (a *app) updateUserName(msg *discordgo.Message, newName string) error {
+	a.userLookup[msg.Author.Username] = newName
+	return nil
+}
+
+func (a *app) getUsername(msg *discordgo.Message) string {
+	userName, ok := a.userLookup[msg.Author.Username]
+	if ok {
+		return userName
+	}
+	if msg.Member.Nick != "" {
+		return msg.Member.Nick
+	}
+	return msg.Author.Username
 }
