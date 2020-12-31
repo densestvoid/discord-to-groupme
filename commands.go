@@ -41,7 +41,13 @@ func (m GroupMeMessage) GetText() string { return m.Text }
 // GetUsername - satisfies the Message interface
 func (m GroupMeMessage) GetUsername() string { return m.Name }
 
-func (a *app) parseCommand(msg Message) (string, bool) {
+const invalidCommand string = `😫  D'oh! "%s" is not a valid command`
+
+const syncCommandHelp string = `Try one of these if you do not know what to do!
+	update: let's you update your info
+`
+
+func (a *app) syncMessageParse(msg Message) (string, bool) {
 	text := msg.GetText()
 	if !strings.HasPrefix(text, "!") {
 		return "", false
@@ -50,6 +56,26 @@ func (a *app) parseCommand(msg Message) (string, bool) {
 	switch cmdList[0] {
 	case "update":
 		return a.updateCommand(cmdList, msg), true
+	case "":
+		return syncCommandHelp, true
+	}
+
+	return fmt.Sprintf(invalidCommand, cmdList[0]), true
+}
+
+const adminCommandHelp string = `Try one of these if you do not know what to do!
+	pause: stops syncing messages between Discord and GroupMe
+	unpuase: resumes syncing messages between Discord and GroupMe
+	reload: reloads the config file and reconnects the dicord client
+`
+
+func (a *app) adminMessageParse(msg Message) (string, bool) {
+	text := msg.GetText()
+	if !strings.HasPrefix(text, "!") {
+		return "", false
+	}
+	cmdList := strings.Split(text[1:], " ")
+	switch cmdList[0] {
 	case "pause":
 		return a.pauseCommand(), true
 	case "unpause":
@@ -57,10 +83,10 @@ func (a *app) parseCommand(msg Message) (string, bool) {
 	case "reload":
 		return a.reloadConfig(), true
 	case "":
-		return "Try one of these if you do not know what to do!\n    update: let's you update your info", true
+		return adminCommandHelp, true
 	}
 
-	return fmt.Sprintf("😫  D'oh! '%s' is not a valid command", cmdList[0]), true
+	return fmt.Sprintf(invalidCommand, cmdList[0]), true
 }
 
 func (a *app) updateCommand(cmdList []string, msg Message) string {
@@ -77,7 +103,7 @@ func (a *app) updateCommand(cmdList []string, msg Message) string {
 		}
 		return fmt.Sprintf("'%s' is now '%s'", oldName, newName)
 	default:
-		return fmt.Sprintf("😫  D'oh! '%s' is not a valid command", cmdList[1])
+		return fmt.Sprintf(invalidCommand, cmdList[1])
 	}
 }
 
@@ -90,33 +116,33 @@ func (a *app) pauseCommand() string {
 	text := "Syncing has been paused"
 
 	if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, text, nil); err != nil {
-		fmt.Println(err)
+		a.SendToTroubleshooting(err.Error())
 	}
 
-	if _, err := a.discSesh.ChannelMessageSend(a.config.DiscordChannelID, text); err != nil {
-		fmt.Println(err)
+	if _, err := a.discSesh.ChannelMessageSend(a.config.Discord.SyncChannelID, text); err != nil {
+		a.SendToTroubleshooting(err.Error())
 	}
 
-	return ""
+	return text
 }
 
 func (a *app) unpauseCommand() string {
 	if !a.paused {
-		return "Syncing not paused"
+		return "Syncing already not paused"
 	}
 
 	a.paused = false
 	text := "Syncing has been unpaused"
 
 	if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, text, nil); err != nil {
-		fmt.Println(err)
+		a.SendToTroubleshooting(err.Error())
 	}
 
-	if _, err := a.discSesh.ChannelMessageSend(a.config.DiscordChannelID, text); err != nil {
-		fmt.Println(err)
+	if _, err := a.discSesh.ChannelMessageSend(a.config.Discord.SyncChannelID, text); err != nil {
+		a.SendToTroubleshooting(err.Error())
 	}
 
-	return ""
+	return text
 }
 
 func (a *app) reloadConfig() string {
@@ -124,7 +150,18 @@ func (a *app) reloadConfig() string {
 	if err != nil {
 		return fmt.Sprintf("Failed to read config: %s", err)
 	}
+
+	discSesh, err := a.ConfigureDiscordSession(newConfig)
+	if err != nil {
+		return fmt.Sprintf("Failed to update config: %s", err)
+	}
+
+	if err := a.discSesh.Close(); err != nil {
+		a.SendToTroubleshooting(err.Error())
+	}
+
 	a.config = newConfig
+	a.discSesh = discSesh
 	return "Updated config"
 }
 

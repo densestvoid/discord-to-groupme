@@ -1,3 +1,3 @@
 # Configuration files
 *.json
-discord-to-groupme
+cmd/sync-bot/sync-bot

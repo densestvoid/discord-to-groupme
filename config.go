@@ -14,12 +14,18 @@ import (
 type Config struct {
 	Filename string `json:"-"`
 
-	GroupMeBotToken  groupme.ID
-	DiscordBotToken  string
-	DiscordChannelID string
+	GroupMeBotToken groupme.ID
+	Discord         DiscordConfig
 
 	StartupMessage  string
 	ShutdownMessage string
+}
+
+type DiscordConfig struct {
+	BotToken                 string
+	SyncChannelID            string
+	AdminChannelID           string
+	TroubleshootingChannelID string
 }
 
 // ReadConfig - opens the file with filename and tries the parse the json in a Config

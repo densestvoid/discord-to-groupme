@@ -33,5 +33,4 @@ func main() {
 		app.Stop()
 	case <-finsihSig:
 	}
-
 }
