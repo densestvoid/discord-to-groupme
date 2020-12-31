@@ -1,11 +1,10 @@
-package main
+package discord_to_groupme
 
 import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"strings"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/densestvoid/groupme"
@@ -26,9 +25,10 @@ type app struct {
 	finishSig  chan struct{}
 	config     *Config
 	userLookup map[string]string
+	paused     bool
 }
 
-// Rerturn a new App instance
+// NewApp - Return a new App instance
 func NewApp(config *Config) App {
 	return &app{
 		config: config,
@@ -61,12 +61,11 @@ func (a *app) Start() (finshedSignal chan struct{}, err error) {
 		}
 	}()
 
-	const startMessage = "Top of the morning to you 🎩"
-	if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, startMessage, nil); err != nil {
+	if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, a.config.StartupMessage, nil); err != nil {
 		fmt.Println(err)
 	}
 
-	if _, err := a.discSesh.ChannelMessageSend(a.config.DiscordChannelID, startMessage); err != nil {
+	if _, err := a.discSesh.ChannelMessageSend(a.config.DiscordChannelID, a.config.StartupMessage); err != nil {
 		fmt.Println(err)
 	}
 	return a.finishSig, nil
@@ -74,12 +73,11 @@ func (a *app) Start() (finshedSignal chan struct{}, err error) {
 
 // Stop close connections and stop the application
 func (a *app) Stop() {
-	const stopMessage = " Bye Bye 👋"
-	if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, stopMessage, nil); err != nil {
+	if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, a.config.ShutdownMessage, nil); err != nil {
 		fmt.Println(err)
 	}
 
-	if _, err := a.discSesh.ChannelMessageSend(a.config.DiscordChannelID, stopMessage); err != nil {
+	if _, err := a.discSesh.ChannelMessageSend(a.config.DiscordChannelID, a.config.ShutdownMessage); err != nil {
 		fmt.Println(err)
 	}
 
@@ -92,7 +90,6 @@ func (a *app) Stop() {
 	if a.finishSig != nil {
 		close(a.finishSig)
 	}
-
 }
 
 // AddDiscordHandlers add all handlers for the discord session
@@ -101,14 +98,22 @@ func (a *app) AddDiscordHandlers() {
 		if msg.Author.Bot || msg.ChannelID != a.config.DiscordChannelID {
 			return
 		}
-		if resp, ok := a.parseDiscordCommand(msg); ok {
-			if _, err := a.discSesh.ChannelMessageSend(a.config.DiscordChannelID, resp); err != nil {
-				fmt.Println(err)
+
+		discMsg := DiscordMessage{msg.Message}
+
+		if resp, ok := a.parseCommand(discMsg); ok {
+			if resp != "" {
+				if _, err := a.discSesh.ChannelMessageSend(a.config.DiscordChannelID, resp); err != nil {
+					fmt.Println(err)
+				}
 			}
 			return
 		}
 
-		userName := a.getUsername(msg.Message)
+		if a.paused {
+			return
+		}
+		userName := a.getUsername(discMsg)
 		textMessage := fmt.Sprintf("[%s]: %s", userName, msg.Content)
 
 		if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, textMessage, nil); err != nil {
@@ -116,11 +121,13 @@ func (a *app) AddDiscordHandlers() {
 		}
 	})
 	a.discSesh.AddHandler(func(session *discordgo.Session, msg *discordgo.MessageUpdate) {
-		if msg.Author.Bot || msg.ChannelID != a.config.DiscordChannelID {
+		if a.paused || msg.Author.Bot || msg.ChannelID != a.config.DiscordChannelID {
 			return
 		}
 
-		userName := a.getUsername(msg.Message)
+		discMsg := DiscordMessage{msg.Message}
+
+		userName := a.getUsername(discMsg)
 		textMessage := fmt.Sprintf("[%s]*EDIT*: %s", userName, msg.Content)
 
 		if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, textMessage, nil); err != nil {
@@ -136,72 +143,42 @@ func (a *app) AddGroupMeHandlers() {
 	router.Methods("POST").Path("/GroupMeEvents").HandlerFunc(func(respWriter http.ResponseWriter, req *http.Request) {
 		defer req.Body.Close()
 
+		if a.paused {
+			return
+		}
+
 		bytes, err := ioutil.ReadAll(req.Body)
 		if err != nil {
 			fmt.Println(err)
 		}
 
-		var msg groupme.Message
+		var msg GroupMeMessage
 		if err := json.Unmarshal(bytes, &msg); err != nil {
 			fmt.Println(err)
 		}
+
 		if msg.SenderType != groupme.SenderType_User {
 			return
 		}
 
-		textMessage := fmt.Sprintf("[%s]: %s", msg.Name, msg.Text)
+		if resp, ok := a.parseCommand(msg); ok {
+			if resp != "" {
+				if err := a.gmClient.PostBotMessage(a.config.GroupMeBotToken, resp, nil); err != nil {
+					fmt.Println(err)
+				}
+			}
+			return
+		}
+
+		if a.paused {
+			return
+		}
+
+		userName := a.getUsername(msg)
+		textMessage := fmt.Sprintf("[%s]: %s", userName, msg.GetText())
 
 		if _, err := a.discSesh.ChannelMessageSend(a.config.DiscordChannelID, textMessage); err != nil {
 			fmt.Println(err)
 		}
 	})
-}
-
-func (a *app) parseDiscordCommand(msg *discordgo.MessageCreate) (string, bool) {
-	if !strings.HasPrefix(msg.Content, "!") {
-		return "", false
-	}
-	cmdList := strings.Split(msg.Content[1:], " ")
-	switch cmdList[0] {
-	case "update":
-		return a.discordUpdateCommand(cmdList, msg), true
-	case "":
-		return "Try one of these if you do not know what to do!\n    update: let's you update your info", true
-	}
-
-	return fmt.Sprintf("😫  D'oh! '%s' is not a valid command", cmdList[0]), true
-}
-
-func (a *app) discordUpdateCommand(cmdList []string, msg *discordgo.MessageCreate) string {
-	if len(cmdList) < 2 {
-		return "Avalible options: \n    name: Change the name that shows up in GroupMe\n"
-	}
-	switch cmdList[1] {
-	case "name":
-		newName := strings.Join(cmdList[2:], " ")
-		oldName := a.getUsername(msg.Message)
-		err := a.updateUserName(msg.Message, newName)
-		if err != nil {
-			return err.Error()
-		}
-		return fmt.Sprintf("'%s' is now '%s'", oldName, newName)
-	default:
-		return fmt.Sprintf("😫  D'oh! '%s' is not a valid command", cmdList[1])
-	}
-}
-
-func (a *app) updateUserName(msg *discordgo.Message, newName string) error {
-	a.userLookup[msg.Author.Username] = newName
-	return nil
-}
-
-func (a *app) getUsername(msg *discordgo.Message) string {
-	userName, ok := a.userLookup[msg.Author.Username]
-	if ok {
-		return userName
-	}
-	if msg.Member.Nick != "" {
-		return msg.Member.Nick
-	}
-	return msg.Author.Username
 }

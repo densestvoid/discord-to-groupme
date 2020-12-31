@@ -6,19 +6,21 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	d2g "github.com/densestvoid/discord-to-groupme"
 )
 
 func main() {
 	var configFilename string
-	flag.StringVar(&configFilename, "c", "tokens.json", "specifies the name of the config file to use")
+	flag.StringVar(&configFilename, "c", "config.json", "specifies the name of the config file to use")
 	flag.Parse()
-	config, err := ReadConfig(configFilename)
+	config, err := d2g.ReadConfig(configFilename)
 	if err != nil {
 		fmt.Println("failed to start: ", err)
 		return
 	}
 
-	app := NewApp(config)
+	app := d2g.NewApp(config)
 	finsihSig, err := app.Start()
 	if err != nil {
 		fmt.Println("failed to start: ", err)
