@@ -19,13 +19,16 @@ type App interface {
 
 // app contains all of the pieces for the bots with a convient start and stop function
 type app struct {
-	gmClient   *groupme.Client
-	discSesh   *discordgo.Session
-	server     http.Server
-	finishSig  chan struct{}
-	config     *Config
-	userLookup map[string]string
-	paused     bool
+	gmClient          *groupme.Client
+	discSesh          *discordgo.Session
+	server            http.Server
+	finishSig         chan struct{}
+	config            *Config
+	groupmeUserLookup map[string]string
+	discordUserLookup map[string]string
+	pendingLinks      []*Link
+	accountLinks      []*Link
+	paused            bool
 }
 
 // NewApp - Return a new App instance
@@ -37,7 +40,8 @@ func NewApp(config *Config) App {
 
 // Start will start both bots and run until stop is called or the server fails
 func (a *app) Start() (finshedSignal chan struct{}, err error) {
-	a.userLookup = map[string]string{}
+	a.groupmeUserLookup = map[string]string{}
+	a.discordUserLookup = map[string]string{}
 	a.finishSig = make(chan struct{})
 	a.gmClient = groupme.NewClient("")
 
